@@ -1,0 +1,61 @@
+[CmdletBinding(SupportsShouldProcess = $true)]
+param()
+
+$EnableWhatIf = $false # set to $false to actually make changes
+$WhatIfPreference = $EnableWhatIf
+
+Import-Module ActiveDirectory
+
+$InputFile = "C:\tempPasswordreset-1.txt"
+$LogFile   = "C:\temp\rotate_disabled_passwords_log.csv"
+$PasswordLength = 48
+
+function New-RandomPassword {
+    param([int]$Length = 48)
+
+    $chars = @(
+        'abcdefghijkmnopqrstuvwxyz' +
+        'ABCDEFGHJKLMNPQRSTUVWXYZ' +
+        '23456789' +
+        '!@#$%^&*()-_=+[]{};:,.?'
+    ).ToCharArray()
+
+
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $bytes = New-Object byte[] $Length
+    $rng.GetBytes($bytes)
+
+    $pwChars = for ($i = 0; $i -lt $Length; $i++) { $chars[$bytes[$i] % $chars.Count] }
+    -join $pwChars
+}
+
+$targets = Get-Content $InputFile | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() }
+
+$results = foreach ($id in $targets) {
+    try {
+        $u = Get-ADUser -Identity $id -Properties Enabled
+
+        if ($u.Enabled) {
+            [pscustomobject]@{ Identity=$id; Status="SKIPPED"; Message="Account is enabled."; Timestamp=(Get-Date).ToString("s") }
+            continue
+        }
+
+        if ($PSCmdlet.ShouldProcess($u.SamAccountName, "Reset password to random $PasswordLength character value")) {
+            $plain  = New-RandomPassword -Length $PasswordLength
+            $secure = ConvertTo-SecureString $plain -AsPlainText -Force
+
+            Set-ADAccountPassword -Identity $u.DistinguishedName -Reset -NewPassword $secure
+
+            $plain  = $null
+            $secure = $null
+        }
+
+        [pscustomobject]@{ Identity=$id; Status="OK"; Message="Password rotation executed or simulated."; Timestamp=(Get-Date).ToString("s") }
+    }
+    catch {
+        [pscustomobject]@{ Identity=$id; Status="FAILED"; Message=$_.Exception.Message; Timestamp=(Get-Date).ToString("s") }
+    }
+}
+
+$results | Export-Csv -Path $LogFile -NoTypeInformation -Encoding UTF8
+$results
