@@ -1,0 +1,24 @@
+Import-Module ActiveDirectory
+
+$Report = "C:\Temp\sid-history-inventory.csv"
+
+$objects = Get-ADObject `
+    -LDAPFilter "(sIDHistory=*)" `
+    -Properties sIDHistory, objectClass, samAccountName, userPrincipalName, distinguishedName
+
+$results = $objects | ForEach-Object {
+    [pscustomobject]@{
+        ObjectClass      = ($_.objectClass -join ",")
+        SamAccountName   = $_.samAccountName
+        UserPrincipalName= $_.userPrincipalName
+        SIDHistoryCount  = @($_.sIDHistory).Count
+        SIDHistory       = ($_.sIDHistory -join "; ")
+        DistinguishedName= $_.DistinguishedName
+    }
+}
+
+$results | Sort-Object ObjectClass, SamAccountName |
+    Export-Csv $Report -NoTypeInformation -Encoding UTF8
+
+$results | Format-Table -AutoSize
+"Report written to $Report"
